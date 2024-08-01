@@ -1,24 +1,21 @@
-id = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]
-
-[network_config]
 mode = "router"
 connect.endpoints = ["quic/127.0.0.1:4721"]
 listen.endpoints = ["quic/[::]:4722"]
 
-[network_config.transport]
+[transport]
 unicast.max_links = 4
 unicast.compression.enabled = true
-[network_config.transport.link]
-[network_config.transport.link.tls]
+[transport.link]
+[transport.link.tls]
 server_name_verification = false
 root_ca_certificate = "config/cert/ca_cert.pem"
 server_certificate = "config/cert/client_cert.pem"
 server_private_key = "config/cert/client_key.pem"
 
-[network_config.scouting]
+[scouting]
 gossip.enabled = false
 multicast.enabled = false
 
-[network_config.routing]
+[routing]
 peer.mode = "peer_to_peer"
 router.peers_failover_brokering = true

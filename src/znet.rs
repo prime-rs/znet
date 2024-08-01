@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    io::Read,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -25,8 +24,8 @@ use zenoh_ext::SubscriberBuilderExt;
 
 use crate::protocol::Message;
 
-pub type NetworkConfig = zenoh::config::Config;
-pub type NetworkMode = zenoh::config::WhatAmI;
+pub type ZnetConfig = zenoh::config::Config;
+pub type ZnetMode = zenoh::config::WhatAmI;
 pub type Callback = Box<dyn FnMut(Message) + Send + Sync + 'static>;
 pub type CallbackWithReply = Box<dyn FnMut(Message) -> Message + Send + Sync + 'static>;
 
@@ -52,13 +51,14 @@ impl Subscriber {
 
     pub(crate) fn callback_mut(mut self) -> Box<dyn FnMut(Sample) + Send + Sync + 'static> {
         Box::new(move |sample: Sample| {
-            let net_msg = Message::decode(
-                &sample
+            let net_msg = Message::new(
+                sample.key_expr(),
+                sample
                     .payload()
                     .deserialize::<Cow<[u8]>>()
-                    .unwrap_or_default(),
-            )
-            .unwrap_or(Message::new(sample.key_expr(), vec![]));
+                    .unwrap_or_default()
+                    .to_vec(),
+            );
             (self.callback)(net_msg);
         })
     }
@@ -86,17 +86,18 @@ impl Queryable {
 
     pub(crate) fn callback_mut(mut self) -> Box<dyn FnMut(Query) + Send + Sync + 'static> {
         Box::new(move |quary: Query| {
-            let net_msg = Message::decode(
-                &quary
+            let net_msg = Message::new(
+                quary.key_expr(),
+                quary
                     .payload()
                     .map(|v| v.deserialize::<Cow<[u8]>>().unwrap_or_default())
-                    .unwrap_or_default(),
-            )
-            .unwrap_or(Message::new(quary.key_expr(), vec![]));
+                    .unwrap_or_default()
+                    .to_vec(),
+            );
             let reply_msg = (self.callback)(net_msg);
             tokio::spawn(async move {
                 quary
-                    .reply(quary.key_expr().clone(), reply_msg.encode())
+                    .reply(quary.key_expr().clone(), reply_msg.payload)
                     .await
                     .map_err(|e| eyre!("reply failed: {e}"))
                     .ok();
@@ -106,7 +107,7 @@ impl Queryable {
 }
 
 #[derive(Clone)]
-pub struct Network {
+pub struct Znet {
     put_sender: Sender<Message>,
     get_sender: Sender<(Message, Callback)>,
     _session: Arc<Session>,
@@ -116,10 +117,27 @@ pub struct Network {
     _liveliness_subscriber: Arc<zenoh_ext::FetchingSubscriber<'static, ()>>,
 }
 
-impl Network {
+impl Znet {
+    #[inline]
+    pub async fn put(&self, topic: &str, payload: Vec<u8>) -> Result<()> {
+        self.put_sender
+            .send_async(Message::new(topic, payload))
+            .await
+            .map_err(|e| eyre!("put failed: {e}"))
+    }
+
+    #[inline]
+    pub async fn get(&self, topic: &str, payload: Vec<u8>, callback: Callback) -> Result<()> {
+        self.get_sender
+            .send_async((Message::new(topic, payload), callback))
+            .await
+            .map_err(|e| eyre!("get failed: {e}"))
+    }
+}
+
+impl Znet {
     pub async fn serve(
-        config: NetworkConfig,
-        address: [u8; 16],
+        config: ZnetConfig,
         subscribers: Vec<Subscriber>,
         queryables: Vec<Queryable>,
     ) -> Result<Self> {
@@ -176,7 +194,7 @@ impl Network {
         // subscribers
         let mut _subscribers = vec![];
         for subscriber in subscribers {
-            info!("{}/{}", subscriber.topic(), self_zid);
+            info!("subscriber: {}/{}", subscriber.topic(), self_zid);
             _subscribers.push(
                 session
                     .declare_subscriber(format!("{}/{}", subscriber.topic(), self_zid))
@@ -191,7 +209,7 @@ impl Network {
 
         // queryables
         for queryable in queryables {
-            info!("{}/{}", queryable.topic(), self_zid);
+            info!("queryable: {}/{}", queryable.topic(), self_zid);
             _queryables.push(
                 session
                     .declare_queryable(format!("{}/{}", queryable.topic(), self_zid))
@@ -213,8 +231,7 @@ impl Network {
         tokio::spawn(async move {
             let mut pulishers: HashMap<String, zenoh::pubsub::Publisher<'static>> = HashMap::new();
             while let Ok(net_msg) = put_msg_rv.recv_async().await {
-                let Ok((serialized_msg, topic)) =
-                    dispatch_msg(net_msg, address, &zid_list_c, &last_sent_zid_index_c)
+                let Ok(topic) = dispatch_msg(&net_msg.topic, &zid_list_c, &last_sent_zid_index_c)
                 else {
                     continue;
                 };
@@ -222,7 +239,7 @@ impl Network {
                 // publish
                 if let Some(publisher) = pulishers.get(&topic) {
                     publisher
-                        .put(serialized_msg)
+                        .put(net_msg.payload)
                         .await
                         .map_err(|e| error!("put msg failed: {e}"))
                         .ok();
@@ -235,7 +252,7 @@ impl Network {
                     .map_err(|e| error!("publisher declare failed: {e}"))
                 {
                     publisher
-                        .put(serialized_msg)
+                        .put(net_msg.payload)
                         .await
                         .map_err(|e| error!("put msg failed: {e}"))
                         .ok();
@@ -251,26 +268,28 @@ impl Network {
         let get_msg_rv = get_msg_rv.clone();
         tokio::spawn(async move {
             while let Ok((net_msg, mut callback)) = get_msg_rv.recv_async().await {
-                let Ok((serialized_msg, topic)) =
-                    dispatch_msg(net_msg, address, &zid_list_c, &last_sent_zid_index_c)
+                let Ok(topic) = dispatch_msg(&net_msg.topic, &zid_list_c, &last_sent_zid_index_c)
                 else {
                     continue;
                 };
 
                 if let Ok(replies) = session_c
                     .get(&topic)
-                    .payload(serialized_msg)
+                    .payload(net_msg.payload)
                     .target(QueryTarget::BestMatching)
                     .timeout(Duration::from_secs(5))
                     .await
                 {
                     if let Ok(reply) = replies.recv_async().await {
                         if let Ok(sample) = reply.result() {
-                            let mut buf = vec![0; sample.payload().len()];
-                            sample.payload().reader().read_exact(&mut buf).ok();
-                            if let Ok(reply_msg) = Message::decode(&buf) {
-                                (callback)(reply_msg);
-                            }
+                            (callback)(Message::new(
+                                sample.key_expr(),
+                                sample
+                                    .payload()
+                                    .deserialize::<Cow<[u8]>>()
+                                    .unwrap_or_default()
+                                    .to_vec(),
+                            ));
                         }
                     }
                 }
@@ -287,29 +306,18 @@ impl Network {
             _liveliness_subscriber: Arc::new(_liveliness_subscriber),
         })
     }
-
-    pub fn put_sender(&self) -> Sender<Message> {
-        self.put_sender.clone()
-    }
-
-    pub fn get_sender(&self) -> Sender<(Message, Callback)> {
-        self.get_sender.clone()
-    }
 }
 
+#[inline]
 fn dispatch_msg(
-    mut net_msg: Message,
-    address: [u8; 16],
+    origin_topic: &str,
     zid_list_c: &RwLock<IndexSet<String>>,
     last_sent_zid_index_c: &AtomicUsize,
-) -> Result<(Vec<u8>, String)> {
-    // set origin
-    net_msg.origin = u128::from_le_bytes(address);
-    let serialized_msg = net_msg.encode();
+) -> Result<String> {
     // debug!("outbound msg: {:?}", &net_msg);
 
-    let topic = if net_msg.topic.ends_with("/*") || net_msg.topic.ends_with("/**") {
-        net_msg.topic
+    let topic = if origin_topic.ends_with("/*") || origin_topic.ends_with("/**") {
+        origin_topic.to_owned()
     } else {
         // pick zid
         let zid = {
@@ -325,9 +333,9 @@ fn dispatch_msg(
             last_sent_zid_index_c.store(zid_index, Ordering::Relaxed);
             zid_list[zid_index].clone()
         };
-        format!("{}/{}", net_msg.topic, zid)
+        format!("{}/{}", origin_topic, zid)
     };
 
     debug!("topic: {}", topic);
-    Ok((serialized_msg, topic))
+    Ok(topic)
 }

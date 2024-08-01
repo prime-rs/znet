@@ -5,9 +5,8 @@ use color_eyre::Result;
 use common_x::signal::waiting_for_shutdown;
 use tracing::{debug, info};
 use znet::{
-    config::Config,
-    network::{Network, Queryable},
     protocol::Message,
+    znet::{Queryable, Znet, ZnetConfig},
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -74,7 +73,7 @@ impl Drop for Stats {
 async fn main() -> Result<()> {
     common_x::log::init_log_filter("info");
     let args = Args::parse();
-    let config: Config = common_x::configure::file_config(&args.config)?;
+    let config: ZnetConfig = common_x::configure::file_config(&args.config)?;
 
     info!("config: {:#?}", config);
 
@@ -85,8 +84,7 @@ async fn main() -> Result<()> {
         Message::new("topic", vec![0; 1024])
     })];
 
-    let _session =
-        Network::serve(config.network_config, config.id, vec![], queryable_callback).await;
+    let _session = Znet::serve(config, vec![], queryable_callback).await;
     waiting_for_shutdown().await;
     info!("shutdown");
     Ok(())

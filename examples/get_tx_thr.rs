@@ -5,9 +5,8 @@ use color_eyre::Result;
 use common_x::signal::waiting_for_shutdown;
 use tracing::{debug, info};
 use znet::{
-    config::Config,
-    network::{Network, Queryable},
     protocol::Message,
+    znet::{Queryable, Znet, ZnetConfig},
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -74,7 +73,7 @@ impl Drop for Stats {
 async fn main() -> Result<()> {
     common_x::log::init_log_filter("info");
     let args = Args::parse();
-    let config: Config = common_x::configure::file_config(&args.config)?;
+    let config: ZnetConfig = common_x::configure::file_config(&args.config)?;
 
     info!("config: {:#?}", config);
 
@@ -86,22 +85,20 @@ async fn main() -> Result<()> {
     })];
 
     // for graceful shutdown
-    let session =
-        Network::serve(config.network_config, config.id, vec![], queryable_callback).await?;
-    let sender = session.get_sender();
+    let session = Znet::serve(config, vec![], queryable_callback).await?;
 
     let sender_handle = tokio::spawn(async move {
         // let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
         loop {
             // interval.tick().await;
-            let msg = Message::new("topic", vec![0; 1024]);
-            sender
-                .send_async((
-                    msg,
+            session
+                .get(
+                    "topic",
+                    vec![0; 1024],
                     Box::new(move |_net_msg| {
                         debug!("tx done");
                     }),
-                ))
+                )
                 .await
                 .ok();
         }
