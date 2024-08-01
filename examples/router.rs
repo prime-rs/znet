@@ -2,10 +2,14 @@ use clap::Parser;
 use color_eyre::Result;
 use common_x::signal::waiting_for_shutdown;
 use tracing::info;
-use znet::{
-    config::{Args, Config},
-    network::Network,
-};
+use znet::{config::Config, network::Network};
+
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    #[arg(short, long, default_value = "config/config.toml")]
+    pub config: String,
+}
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 30)]
 async fn main() -> Result<()> {
