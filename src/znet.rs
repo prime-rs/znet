@@ -25,7 +25,6 @@ use zenoh_ext::SubscriberBuilderExt;
 use crate::protocol::Message;
 
 pub type ZnetConfig = zenoh::config::Config;
-pub type ZnetMode = zenoh::config::WhatAmI;
 pub type Callback = Box<dyn FnMut(Message) + Send + Sync + 'static>;
 pub type CallbackWithReply = Box<dyn FnMut(Message) -> Message + Send + Sync + 'static>;
 

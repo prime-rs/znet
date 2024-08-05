@@ -1,6 +1,6 @@
 mode = "router"
-connect.endpoints = ["quic/127.0.0.1:4720"]
-listen.endpoints = ["quic/[::]:4721"]
+connect.endpoints = ["tcp/127.0.0.1:4720"]
+listen.endpoints = ["tcp/[::]:4721"]
 
 [transport]
 unicast.max_links = 4
