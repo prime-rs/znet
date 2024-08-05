@@ -11,3 +11,4 @@ pub use znet::Queryable;
 pub use znet::Subscriber;
 pub use znet::Znet;
 pub use znet::ZnetConfig;
+pub use znet::ZnetMode;
