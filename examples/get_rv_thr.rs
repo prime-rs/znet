@@ -71,13 +71,13 @@ impl Drop for Stats {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 30)]
 async fn main() -> Result<()> {
-    common_x::log::init_log_filter("info");
+    common_x::log::init_log_filter("debug");
     let args = Args::parse();
     let config: ZnetConfig = common_x::configure::file_config(&args.config)?;
 
     info!("config: {:#?}", config);
 
-    let mut stats = Stats::new(10000);
+    let mut stats = Stats::new(1000);
     let queryable_callback = vec![Queryable::new("topic", move |_net_msg| -> Message {
         stats.increment();
         debug!("reply...");
@@ -85,6 +85,7 @@ async fn main() -> Result<()> {
     })];
 
     let _session = Znet::serve(config, vec![], queryable_callback).await;
+
     waiting_for_shutdown().await;
     info!("shutdown");
     Ok(())

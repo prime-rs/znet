@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -14,7 +13,6 @@ use indexmap::IndexSet;
 use parking_lot::RwLock;
 use zenoh::{
     liveliness::LivelinessToken,
-    prelude::*,
     qos::{CongestionControl, Priority},
     query::{Query, QueryTarget},
     sample::{Locality, Sample, SampleKind},
@@ -51,14 +49,7 @@ impl Subscriber {
 
     pub(crate) fn callback_mut(mut self) -> Box<dyn FnMut(Sample) + Send + Sync + 'static> {
         Box::new(move |sample: Sample| {
-            let net_msg = Message::new(
-                sample.key_expr(),
-                sample
-                    .payload()
-                    .deserialize::<Cow<[u8]>>()
-                    .unwrap_or_default()
-                    .to_vec(),
-            );
+            let net_msg = Message::new(sample.key_expr(), sample.payload().to_bytes().to_vec());
             (self.callback)(net_msg);
         })
     }
@@ -90,7 +81,7 @@ impl Queryable {
                 quary.key_expr(),
                 quary
                     .payload()
-                    .map(|v| v.deserialize::<Cow<[u8]>>().unwrap_or_default())
+                    .map(|v| v.to_bytes())
                     .unwrap_or_default()
                     .to_vec(),
             );
@@ -109,12 +100,12 @@ impl Queryable {
 #[derive(Clone)]
 pub struct Znet {
     put_sender: Sender<Message>,
-    get_sender: Sender<(Message, Callback)>,
+    get_sender: Sender<(Message, Sender<Message>)>,
     _session: Arc<Session>,
-    _queryables: Arc<Vec<zenoh::query::Queryable<'static, ()>>>,
-    _subscribers: Arc<Vec<zenoh::pubsub::Subscriber<'static, ()>>>,
-    _liveliness_token: Arc<LivelinessToken<'static>>,
-    _liveliness_subscriber: Arc<zenoh_ext::FetchingSubscriber<'static, ()>>,
+    _queryables: Arc<Vec<zenoh::query::Queryable<()>>>,
+    _subscribers: Arc<Vec<zenoh::pubsub::Subscriber<()>>>,
+    _liveliness_token: Arc<LivelinessToken>,
+    _liveliness_subscriber: Arc<zenoh_ext::FetchingSubscriber<()>>,
 }
 
 impl Znet {
@@ -127,10 +118,13 @@ impl Znet {
     }
 
     #[inline]
-    pub async fn get(&self, topic: &str, payload: Vec<u8>, callback: Callback) -> Result<()> {
+    pub async fn get(&self, topic: &str, payload: Vec<u8>) -> Result<Message> {
+        let (tx, rv) = flume::bounded::<Message>(1);
         self.get_sender
-            .send_async((Message::new(topic, payload), callback))
+            .send_async((Message::new(topic, payload), tx))
             .await
+            .map_err(|e| eyre!("get failed: {e}"))?;
+        rv.recv_timeout(Duration::from_secs(1))
             .map_err(|e| eyre!("get failed: {e}"))
     }
 }
@@ -199,7 +193,6 @@ impl Znet {
                 session
                     .declare_subscriber(format!("{}/{}", subscriber.topic(), self_zid))
                     .callback_mut(subscriber.callback_mut())
-                    .best_effort()
                     .await
                     .map_err(|e| eyre!("subscriber declare failed: {e}"))?,
             );
@@ -221,7 +214,7 @@ impl Znet {
 
         let last_sent_zid_index = Arc::new(AtomicUsize::new(0));
         let (put_msg_tx, put_msg_rv) = flume::bounded::<Message>(1024 * 8);
-        let (get_msg_tx, get_msg_rv) = flume::bounded::<(Message, Callback)>(1024 * 8);
+        let (get_msg_tx, get_msg_rv) = flume::bounded::<(Message, Sender<Message>)>(1024 * 8);
 
         // put
         let zid_list_c = zid_list.clone();
@@ -267,7 +260,7 @@ impl Znet {
         let last_sent_zid_index_c = last_sent_zid_index.clone();
         let get_msg_rv = get_msg_rv.clone();
         tokio::spawn(async move {
-            while let Ok((net_msg, mut callback)) = get_msg_rv.recv_async().await {
+            while let Ok((net_msg, callback)) = get_msg_rv.recv_async().await {
                 let Ok(topic) = dispatch_msg(&net_msg.topic, &zid_list_c, &last_sent_zid_index_c)
                 else {
                     continue;
@@ -282,14 +275,12 @@ impl Znet {
                 {
                     if let Ok(reply) = replies.recv_async().await {
                         if let Ok(sample) = reply.result() {
-                            (callback)(Message::new(
-                                sample.key_expr(),
-                                sample
-                                    .payload()
-                                    .deserialize::<Cow<[u8]>>()
-                                    .unwrap_or_default()
-                                    .to_vec(),
-                            ));
+                            callback
+                                .send(Message::new(
+                                    sample.key_expr(),
+                                    sample.payload().to_bytes().to_vec(),
+                                ))
+                                .ok();
                         }
                     }
                 }

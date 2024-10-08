@@ -1,0 +1,42 @@
+mode = "router"
+# connect.endpoints = ["quic/127.0.0.1:4700"]
+listen.endpoints = ["tcp/[::]:4721"]
+
+[transport]
+unicast.max_links = 4
+unicast.compression.enabled = true
+[transport.link]
+[transport.link.tls]
+server_name_verification = false
+root_ca_certificate = "config/cert/ca_cert.pem"
+server_certificate = "config/cert/server_cert.pem"
+server_private_key = "config/cert/server_key.pem"
+
+[scouting]
+gossip.enabled = false
+multicast.enabled = false
+
+[routing]
+peer.mode = "peer_to_peer"
+router.peers_failover_brokering = true
+
+[plugins_loading]
+enabled = true
+search_dirs = ["config"]
+
+[plugins.storage_manager.volumes.influxdb]
+url = "http://192.168.194.216:8086"
+private.org_id = "chain-cache"
+private.token = "E0mMiT-Emm-C4Q2qHLqnjySou4sP4kSCy_tXCdJnqHSh95THOlMxSXosb_eltOz5fNu4859sv4U3DWwfeKdFZg=="
+
+[plugins.storage_manager.storages.demo]
+key_expr = "topic/**"
+strip_prefix = "topic"
+
+[plugins.storage_manager.storages.demo.volume]
+id = "influxdb"
+db = "zenoh_example"
+create_db = false
+on_closure = "do_nothing"
+private.org_id = "chain-cache"
+private.token = "E0mMiT-Emm-C4Q2qHLqnjySou4sP4kSCy_tXCdJnqHSh95THOlMxSXosb_eltOz5fNu4859sv4U3DWwfeKdFZg=="

@@ -4,10 +4,7 @@ use clap::Parser;
 use color_eyre::Result;
 use common_x::signal::waiting_for_shutdown;
 use tracing::{debug, info};
-use znet::{
-    protocol::Message,
-    znet::{Queryable, Znet, ZnetConfig},
-};
+use znet::znet::{Znet, ZnetConfig};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -77,34 +74,20 @@ async fn main() -> Result<()> {
 
     info!("config: {:#?}", config);
 
-    let mut stats = Stats::new(10000);
-    let queryable_callback = vec![Queryable::new("topic", move |_net_msg| -> Message {
-        stats.increment();
-        debug!("reply...");
-        Message::new("topic", vec![0; 1024])
-    })];
-
     // for graceful shutdown
-    let session = Znet::serve(config, vec![], queryable_callback).await?;
+    let session = Znet::serve(config, vec![], vec![]).await?;
 
-    let sender_handle = tokio::spawn(async move {
+    tokio::spawn(async move {
         // let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
         loop {
             // interval.tick().await;
-            session
-                .get(
-                    "topic",
-                    vec![0; 1024],
-                    Box::new(move |_net_msg| {
-                        debug!("tx done");
-                    }),
-                )
-                .await
-                .ok();
+            if let Ok(r) = session.get("topic", vec![0; 1024]).await {
+                debug!("get: {r:?}");
+            }
         }
     });
+
     waiting_for_shutdown().await;
-    sender_handle.abort();
     info!("shutdown");
     Ok(())
 }

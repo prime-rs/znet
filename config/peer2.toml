@@ -1,6 +1,6 @@
 mode = "router"
-connect.endpoints = ["tcp/127.0.0.1:4721"]
-listen.endpoints = ["tcp/[::]:4722"]
+connect.endpoints = ["quic/127.0.0.1:4721"]
+listen.endpoints = ["quic/[::]:4722"]
 
 [transport]
 unicast.max_links = 4
@@ -11,6 +11,8 @@ server_name_verification = false
 root_ca_certificate = "config/cert/ca_cert.pem"
 server_certificate = "config/cert/client_cert.pem"
 server_private_key = "config/cert/client_key.pem"
+[transport.shared_memory]
+enabled = false
 
 [scouting]
 gossip.enabled = false
