@@ -1,3 +1,9 @@
+use zenoh::key_expr::format::kedefine;
+
+kedefine!(
+    pub liveliness_format: "liveliness/${self_zid:*}",
+);
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Message {
     pub topic: String,

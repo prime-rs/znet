@@ -20,7 +20,7 @@ use zenoh::{
 };
 use zenoh_ext::SubscriberBuilderExt;
 
-use crate::protocol::Message;
+use crate::protocol::{liveliness_format, Message};
 
 pub type ZnetConfig = zenoh::config::Config;
 pub type ZnetMode = zenoh::config::WhatAmI;
@@ -167,17 +167,19 @@ impl Znet {
             .declare_subscriber(format!("{}**", liveliness_prefix))
             .querying()
             .callback(move |sample| {
-                if let Some(zid) = sample.key_expr().as_str().strip_prefix(liveliness_prefix) {
+                if let Ok(parsed) = liveliness_format::parse(sample.key_expr()) {
                     match sample.kind() {
                         SampleKind::Put => {
-                            zid_list_c.write().insert(zid.to_owned());
-                            info!("[Peer connected]: new alive token ({})", zid);
+                            zid_list_c.write().insert(parsed.self_zid().to_string());
+                            info!("[Peer connected]: new alive token ({})", parsed.self_zid());
                         }
                         SampleKind::Delete => {
-                            if !self_zid.to_string().eq(zid) {
-                                zid_list_c.write().shift_remove(zid);
+                            if !self_zid.to_string().eq(&parsed.self_zid().to_string()) {
+                                zid_list_c
+                                    .write()
+                                    .shift_remove(&parsed.self_zid().to_string());
                             }
-                            info!("[Peer offline]: dropped token ({})", zid);
+                            info!("[Peer offline]: dropped token ({})", parsed.self_zid());
                         }
                     }
                 }

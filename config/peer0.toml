@@ -7,10 +7,11 @@ unicast.max_links = 4
 unicast.compression.enabled = true
 [transport.link]
 [transport.link.tls]
-server_name_verification = false
+enable_mtls = false
+verify_name_on_connect = false
 root_ca_certificate = "config/cert/ca_cert.pem"
-server_certificate = "config/cert/server_cert.pem"
-server_private_key = "config/cert/server_key.pem"
+listen_certificate = "config/cert/server_cert.pem"
+listen_private_key = "config/cert/server_key.pem"
 [transport.shared_memory]
 enabled = false
 
