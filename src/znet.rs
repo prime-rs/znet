@@ -18,7 +18,7 @@ use zenoh::{
     sample::{Locality, Sample, SampleKind},
     Session,
 };
-use zenoh_ext::SubscriberBuilderExt;
+use zenoh_ext::{AdvancedSubscriberBuilder, AdvancedSubscriberBuilderExt, SubscriberBuilderExt};
 
 use crate::protocol::{liveliness_format, Message};
 
@@ -137,7 +137,7 @@ impl Znet {
     ) -> Result<Self> {
         debug!("net starting: {config:#?}");
 
-        let self_zid = *config.id();
+        let self_zid = config.id().unwrap_or_default();
 
         // open zenoh session
         let session = Arc::new(
